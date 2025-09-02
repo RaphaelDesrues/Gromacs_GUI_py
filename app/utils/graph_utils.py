@@ -1,3 +1,5 @@
+from Qt import QtWidgets, QtCore #type: ignore
+
 # def nodes_left_to_right(nodes):
 #     return sorted(nodes, key=lambda n: (n.pos()[0], n.pos()[1]))
 
@@ -35,3 +37,23 @@
 #     for row in rows:
 #         ordered.extend(sorted(row, key=lambda n: n.pos()[0]))
 #     return ordered
+
+class CmdPreview(QtWidgets.QWidget):
+
+    def __init__(self, node_graph):
+        super().__init__()
+        self.node_graph = node_graph
+        self.layout = QtWidgets.QVBoxLayout(self)
+        # self.text = QtWidgets.QPlainTextEdit()
+        # self.text.setReadOnly(True)
+        self.text = QtWidgets.QTextEdit(readOnly=True)
+        self.text.setPlainText("Select a Node for Preview")
+        self.text.setMinimumHeight(50) 
+        self.layout.setContentsMargins(4, 4, 4, 4)
+        self.text.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.layout.addWidget(self.text)
+
+    def update_preview(self, text, node):
+        self.text.setPlainText(" ".join(["gmx", node.__identifier__, text]))
+        self.text.setAlignment(QtCore.Qt.AlignCenter)

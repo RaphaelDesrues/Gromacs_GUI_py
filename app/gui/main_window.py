@@ -1,62 +1,21 @@
 import inspect
 from Qt import QtWidgets, QtCore, QtGui # type: ignore
-from NodeGraphQt import NodeGraph, BaseNode, PropertiesBinWidget # type: ignore
+from NodeGraphQt import NodeGraph, BaseNode # type: ignore
 
 from app.gui.node_library import NodeLibrary
 from app.nodes import node_types
 from app.gui.control_panel import ControlPanel
-from app.gui.custom_widgets import FileLinkProperty
-
-
-class MyPropertiesBinWidget(PropertiesBinWidget):
-    def create_property_editor(self, node):
-        editor = super().create_property_editor(node)
-
-        tab_windows = getattr(editor, "_NodePropEditorWidget__tab_windows", None)
-        if not tab_windows:
-            return editor
-
-        if "Properties" not in tab_windows:
-            try:
-                editor.add_tab("Properties")
-            except Exception:
-                pass
-        prop_container = tab_windows.get("Properties")
-        if prop_container is None:
-            return editor
-
-        file_prop = FileLinkProperty(prop_container)
-        file_prop.set_name("file_link")
-        try:
-            cur = node.get_property("file_link")
-        except Exception:
-            cur = ""
-        file_prop.set_value(cur if cur is not None else "")
-
-        try:
-            prop_container.add_widget(
-                name="file_link",
-                widget=file_prop,
-                value=file_prop.get_value(),
-                label="file link",
-                tooltip="Select a file path"
-            )
-        except Exception:
-            prop_container.add_widget("file_link", file_prop)
-
-        # relayer vers l'éditeur (comme la lib le fait)
-        if hasattr(editor, "_on_property_changed"):
-            file_prop.value_changed.connect(lambda name, v: editor._on_property_changed(name, v))
-
-        return editor
-  
+from app.utils.graph_utils import CmdPreview
+from app.assets.my_prop_bin import MyPropertiesBin
 
 
 class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
-
-        # Initializes main window
+        
+        # -------------------------
+        # Initialize main windows
+        # -------------------------
         super().__init__()
         self.setWindowTitle("Gromacs Node Workflow")
         self.resize(1000, 800)
@@ -65,7 +24,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Create the central windows to manage nodes
         self.node_graph = NodeGraph()
         self.node_graph.port_connected.connect(self._on_port_connected)
-
 
         # Automatically retrieves all the class nodes
         # Attention detect only in it inherits from BaseNode
@@ -80,39 +38,58 @@ class MainWindow(QtWidgets.QMainWindow):
         for node in node_types_list:
             self.node_graph.register_node(node)
 
+
+        # -------------------------
+        # Create the main panel
+        # -------------------------
         # Create the right list panel
         self.node_list = NodeLibrary(node_types_list)
 
         # Create the left properties panel
-        # self.node_props = NodeProperties() # Handmade props panel
-        self.props_bin = PropertiesBinWidget(node_graph=self.node_graph)
-        # self.props_bin = MyPropertiesBinWidget(node_graph=self.node_graph)
+        self.props_bin = MyPropertiesBin(node_graph=self.node_graph)
 
-
+        # Add control panel 
         self.control_panel = ControlPanel(self.node_graph)
 
+        # Add command preview
+        self.cmd_preview = CmdPreview(self.node_graph)
+        
+        # Set the main window layout
+        self._init_ui()
 
-        # Connect double click to node creation
-        self.node_list.widget.itemDoubleClicked.connect(self.add_node_on_click)
 
-        # Connect graph node to their properties
-        self.node_graph.node_double_clicked.connect(self.show_props)
+        # -------------------------
+        # Add main window commands
+        # -------------------------
+        # Double click to add node to central panel
+        self.node_list.widget.itemDoubleClicked.connect(self._add_node_on_click)
 
-        # Connect control panel buttons
-        # Select only the first node
-        # self.control_panel.select_one_btn.clicked.connect(self.control_panel.selected_node)
-        self.control_panel.select_one_btn.clicked.connect(self.control_panel.gen_gro_cmd)
-        # Select all the selected nodes
+        # Double click on node to open custom porperties
+        self.node_graph.node_double_clicked.connect(self._show_props)
+
+        # Display and update preview if additional properties
+        self.control_panel.select_one_btn.clicked.connect(self._display_preview)
+        self.node_graph.node_selected.connect(self._display_preview)
+        
+        # Select one, multiple or all nodes
+        self.control_panel.select_one_btn.clicked.connect(self.control_panel.selected_node)
         self.control_panel.select_many_btn.clicked.connect(self.control_panel.selected_nodes)
-        # Select all nodes 
         self.control_panel.select_all_btn.clicked.connect(self.control_panel.select_all_nodes)
-        # Generate bash script
+        
+        # Generate scripts (bash, python)
         self.control_panel.generate_bash_script_btn.clicked.connect(self.control_panel.generate_bash_script)
-        # Generate python script
         self.control_panel.generate_python_script_btn.clicked.connect(self.control_panel.generate_python_script)
-        # Run GROMACS
+        
+        # Run GROMACS locally
         self.control_panel.run_gromacs_ui.clicked.connect(self.control_panel.run_gromacs_from_ui)
 
+        # Add additional properties to nodes
+        self.node_graph.property_changed.connect(self._on_prop_changed)
+
+
+        # -------------------------
+        # Add shortcuts
+        # -------------------------
         # Delete node
         QtWidgets.QShortcut(
             QtGui.QKeySequence.Delete,  # Suppr key
@@ -120,9 +97,65 @@ class MainWindow(QtWidgets.QMainWindow):
             activated=lambda: self.node_graph.delete_nodes(self.node_graph.selected_nodes())
         )
 
-        # Set the main window layout
-        self._init_ui()
 
+    def _init_ui(self):
+        main_splitter = QtWidgets.QSplitter()
+        main_splitter.setOrientation(QtCore.Qt.Horizontal)
+        
+        # Left: list
+        main_splitter.addWidget(self.node_list.widget)
+
+        # Center: vertical splitter
+        center_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        center_splitter.addWidget(self.node_graph.widget)     # Up
+        center_splitter.addWidget(self.cmd_preview)           # Preview of node command
+        center_splitter.addWidget(self.control_panel)         # Down
+
+        # Prevent collapse
+        center_splitter.setCollapsible(0, False)
+        center_splitter.setCollapsible(1, False)
+        center_splitter.setCollapsible(2, False)
+
+        # Reasonable proportions (3 widgets -> 3 sizes)
+        # center_splitter.setSizes([650, 1, 300])
+
+        # Stretch: graph takes more space, preview stays thin
+        center_splitter.setStretchFactor(0, 15)
+        center_splitter.setStretchFactor(1, 1)
+        center_splitter.setStretchFactor(2, 4)
+
+        # Add center splitter to main splitter
+        main_splitter.addWidget(center_splitter)
+
+        # Right: props
+        main_splitter.addWidget(self.props_bin)
+
+        # Global layout sizes (left / center / right)
+        main_splitter.setSizes([200, 900, 320])
+        main_splitter.setCollapsible(0, False)
+        main_splitter.setCollapsible(1, False)
+        main_splitter.setCollapsible(2, False)
+        
+        self.setCentralWidget(main_splitter)
+
+
+    def _add_node_on_click(self, item):
+        node_class = item.data(QtCore.Qt.UserRole) # Retrieves the class of the selected node
+        node = self.node_graph.create_node(
+            f"{node_class.__identifier__}.{node_class.__name__}",
+            name=f"{node_class.NODE_NAME}",
+            pos=[200, 200])
+        
+        # for p in node.input_ports():
+        #     try:
+        #         print(f"ACCEPTS {p.name()} ->", node.accepted_port_types(p))
+        #     except Exception as e:
+        #         print("accepted_port_types failed:", e)
+
+
+    def _show_props(self, node):
+        self.props_bin.show()
+        self.props_bin.add_node(node)
 
 
     def _on_port_connected(self, port_a, port_b):
@@ -167,47 +200,69 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
-    def _init_ui(self):
-        main_splitter = QtWidgets.QSplitter()
-        main_splitter.setOrientation(QtCore.Qt.Horizontal)
-        
-        # Left: list
-        main_splitter.addWidget(self.node_list.widget)
 
-        # Center: Vertical Split - Up
-        center_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        center_splitter.addWidget(self.node_graph.widget)
+    def _display_preview(self, nodes):
+        if not nodes:
+            return
+        # node = nodes[-1]
+        node = nodes
+        # props = node.properties().get("custom", {})
+        # txt = " ".join(f"{k} {v}" for k, v in props.items())
+        self.cmd_preview.update_preview(self.control_panel.fill_cmd_v2(), node)
+    
 
-        # Center: Vertical Split - Down (already a widget)
-        center_splitter.addWidget(self.control_panel)
+    def _on_prop_changed(self, node, menu_prop_name, prop_value):
+        # menu_prop_name = property name in the menu != property name to add
+        # prop_value = item of the menu = property label to add
 
-        # Add center_splitter to main_splitter
-        main_splitter.addWidget(center_splitter)
+        # We process only the properties in the menu
+        if menu_prop_name != "Add_Props" or not prop_value:
+            return
 
-        # Left: Props
-        main_splitter.addWidget(self.props_bin)
+        # Retrieve name and value from the dict
+        try:
+            name, value = node.PREDEFINED_PROPS[prop_value]
+        except Exception:
+            print(f"[WARN] Key '{prop_value}' not in PREDEFINED_PROPS of {node}")
+            return
 
-        # Resize
-        main_splitter.setSizes([150, 700, 250])
-        center_splitter.setSizes([600, 150])
-        self.setCentralWidget(main_splitter)
+        # Avoid duplicates
+        node_props = node.properties().get("custom", {})
+        if name in node_props:
+            print(f"[INFO] Property '{name}' already exists in {node}, pass")
+            # node.set_property("Add_Props", None)
+            return
 
+        # Add the proprety using MyBaseNode.add_text_input
+        node.add_text_input(name=name, label=prop_value, text=value)
+        node.hide_widget(name=name, push_undo=False)
+        print("[INFO] Property added")
 
-    def add_node_on_click(self, item):
-        node_class = item.data(QtCore.Qt.UserRole) # Retrieves the class of the selected node
-        node = self.node_graph.create_node(
-            f"{node_class.__identifier__}.{node_class.__name__}",
-            name=f"{node_class.NODE_NAME}",
-            pos=[200, 200])
-        
-        for p in node.input_ports():
-            try:
-                print(f"ACCEPTS {p.name()} ->", node.accepted_port_types(p))
-            except Exception as e:
-                print("accepted_port_types failed:", e)
+        # Check
+        # props_after = node.properties().get("custom", {})
+        # ok = props_after.get(prop_value, None)
+        # print(f"[CHECK] '{prop_value}' enregistré =", repr(ok))
 
-    def show_props(self, node):
-        self.props_bin.show()
-        self.props_bin.add_node(node)
+        # Reset the menu
+        node.set_property("Add_Props", None)
+
+        # Refresh the property bin
+        try:
+            self.props_bin.remove_node(node)
+            self.props_bin.add_node(node)
+        except Exception as e:
+            print("[WARN] Refresh props_bin:", e)
+
+        # Refresh the preview
+        if hasattr(self, "update_preview"):
+            self.update_preview()
+
+        # Debug signal
+        # print("=== property_changed ===")
+        # print("Node:", node)
+        # print("name:", menu_prop_name)
+        # print("name:", name)
+        # print("value:", value)
+        # print("========================")
 
 

@@ -98,13 +98,32 @@ class ControlPanel(QtWidgets.QWidget):
             if not tpl:
                 continue
             props = node.properties().get("custom", {})
+            print("PROPS", props)
+
             if isinstance(tpl, (list, tuple)):
                 # Some cmd have grompp and mdrun
                 cmds += [s.format(**props) for s in tpl]
             else:
                 cmds.append(tpl.format(**props))
-
         return cmds
+
+
+    def fill_cmd_v2(self):
+        cmds = []
+        # Spatially organises the script as the node from left to right
+        all_nodes = sorted(self.node_graph.all_nodes(), key=lambda n: n.pos()[0])
+        
+        for node in all_nodes:
+            node_props = node.properties().get("custom", {})
+
+            cmd_tmp = " ".join(f"{name} {value}" for name, value in node_props.items() if name != "Add_Props")
+            cmds.append(cmd_tmp)
+        
+        print("DEBUG", cmds[0], type(cmds[0]))
+        
+        return cmds[0]
+
+
 
     def generate_bash_script(self):
         script = []
@@ -134,4 +153,6 @@ class ControlPanel(QtWidgets.QWidget):
         for cmd in self.fill_cmd():
             print("RUN: ", cmd)
             subprocess.run(cmd.split(), check=True)
+
+
 
