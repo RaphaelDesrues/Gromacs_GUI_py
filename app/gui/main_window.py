@@ -1,11 +1,14 @@
+from genericpath import exists
 import inspect
+from itertools import product
+from sqlite3 import connect
 from Qt import QtWidgets, QtCore, QtGui # type: ignore
 from NodeGraphQt import NodeGraph, BaseNode # type: ignore
 
 from app.gui.node_library import NodeLibrary
 from app.nodes import node_types
 from app.gui.control_panel import ControlPanel
-from app.utils.graph_utils import CmdPreview
+from app.gui.cmd_preview import CmdPreview
 from app.assets.my_prop_bin import MyPropertiesBin
 
 
@@ -68,7 +71,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.node_graph.node_double_clicked.connect(self._show_props)
 
         # Display and update preview if additional properties
-        self.control_panel.select_one_btn.clicked.connect(self._display_preview)
+        # self.control_panel.select_one_btn.clicked.connect(self._display_preview)
         self.node_graph.node_selected.connect(self._display_preview)
         
         # Select one, multiple or all nodes
@@ -192,6 +195,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # 4) Pick property names and copy value once
         src_prop = src_map.get(src_type)
         dst_prop = dst_map.get(dst_type)
+        print('test', src_prop, dst_prop)
 
         if src_prop and dst_prop:
             try:
@@ -201,14 +205,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
 
 
-    def _display_preview(self, nodes):
-        if not nodes:
-            return
-        # node = nodes[-1]
-        node = nodes
-        # props = node.properties().get("custom", {})
-        # txt = " ".join(f"{k} {v}" for k, v in props.items())
-        self.cmd_preview.update_preview(self.control_panel.fill_cmd_v2(), node)
+    def _display_preview(self, node):
+        text  = self.control_panel.fill_one_cmd(node)
+        self.cmd_preview.update_preview(text)
     
 
     def _on_prop_changed(self, node, menu_prop_name, prop_value):
@@ -217,7 +216,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # We process only the properties in the menu
         if menu_prop_name != "Add_Props" or not prop_value:
-            return
+            self._propagate_props(node, menu_prop_name, prop_value)
 
         # Retrieve name and value from the dict
         try:
@@ -255,7 +254,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Refresh the preview
         if hasattr(self, "update_preview"):
-            self.update_preview()
+            # self.update_preview()
+            self.cmd_preview.update_preview(self.control_panel.fill_all_cmd(), node)
 
         # Debug signal
         # print("=== property_changed ===")
@@ -264,5 +264,22 @@ class MainWindow(QtWidgets.QMainWindow):
         # print("name:", name)
         # print("value:", value)
         # print("========================")
+
+
+    def _propagate_props(self, node, menu_prop_name, prop_value):
+        print("NODE:", node)
+        print("PROP_NAME:", menu_prop_name)
+
+        src_outputs = node.outputs()
+        dst_nodes = node.connected_output_nodes()
+
+        if not any(dst_nodes.values()):
+            return
+
+        for connected_nodes in dst_nodes.values():
+            for connected_node in connected_nodes:
+                for port_out, port_in in product(src_outputs.values(), connected_node.inputs().values()):
+                    print("TEST", port_out, port_in)
+                    self._on_port_connected(port_out, port_in)
 
 
