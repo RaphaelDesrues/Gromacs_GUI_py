@@ -1,3 +1,4 @@
+from textwrap import fill
 from Qt import QtWidgets # type: ignore
 from app.export.workflow_exporter import map_props, MAPPING
 import subprocess
@@ -15,7 +16,7 @@ class ControlPanel(QtWidgets.QWidget):
         self.generate_bash_script_btn = QtWidgets.QPushButton("Generate Bash Script")
         self.generate_python_script_btn = QtWidgets.QPushButton("Generate Python Script")
         self.run_gromacs_ui = QtWidgets.QPushButton("Run GROMACS")
-        # Ajout à la layout
+
         self.layout.addWidget(self.select_one_btn)
         self.layout.addWidget(self.select_many_btn)
         self.layout.addWidget(self.select_all_btn)
@@ -24,23 +25,23 @@ class ControlPanel(QtWidgets.QWidget):
         self.layout.addWidget(self.run_gromacs_ui)
 
 
-    def selected_node(self):
-        # Retrieve the class of the node
-        print(self.node_graph.selected_nodes()[0].properties())
-        return self.node_graph.selected_nodes()[0]
-        selected_node = self.node_graph.selected_nodes()[0]
-        print("One (First) node selected", type(selected_node))
+    # def selected_node(self):
+    #     # Retrieve the class of the node
+    #     print(self.node_graph.selected_nodes()[0].properties())
+    #     return self.node_graph.selected_nodes()[0]
+    #     selected_node = self.node_graph.selected_nodes()[0]
+    #     print("One (First) node selected", type(selected_node))
 
 
-    def selected_nodes(self):
-        selected_nodes = self.node_graph.selected_nodes()
-        print("Many nodes selected", type(selected_nodes))
-        return
+    # def selected_nodes(self):
+    #     selected_nodes = self.node_graph.selected_nodes()
+    #     print("Many nodes selected", type(selected_nodes))
+    #     return
 
-    def select_all_nodes(self):
-        all_nodes = self.node_graph.all_nodes()
-        print("All nodes selected", type(all_nodes))
-        return all_nodes
+    # def select_all_nodes(self):
+    #     all_nodes = self.node_graph.all_nodes()
+    #     print("All nodes selected", type(all_nodes))
+    #     return all_nodes
 
     def gen_gro_cmd(self):
         # Retrieve the class of the selected node
@@ -88,46 +89,28 @@ class ControlPanel(QtWidgets.QWidget):
         print("====================\n")
 
 
-
-    def fill_cmd(self):
-        cmds = []
-        # Spatially organises the script as the node from left to right
-        all_nodes = sorted(self.node_graph.all_nodes(), key=lambda n: n.pos()[0])  
-        for node in all_nodes:
-            tpl = MAPPING.get(node.__identifier__)
-            if not tpl:
-                continue
-            props = node.properties().get("custom", {})
-            print("PROPS", props)
-
-            if isinstance(tpl, (list, tuple)):
-                # Some cmd have grompp and mdrun
-                cmds += [s.format(**props) for s in tpl]
-            else:
-                cmds.append(tpl.format(**props))
-        return cmds
+    def fill_one_cmd(self, node):
+        node_props = node.properties().get("custom", {})
+        cmd_tmp = " ".join(f"{name} {value}" for name, value in node_props.items() if name != "Add_Props")
+        return cmd_tmp
 
 
-    def fill_cmd_v2(self):
+    def fill_all_cmd(self):
+
         cmds = []
         # Spatially organises the script as the node from left to right
         all_nodes = sorted(self.node_graph.all_nodes(), key=lambda n: n.pos()[0])
-        
+
         for node in all_nodes:
-            node_props = node.properties().get("custom", {})
+            cmd_tmp = self.fill_one_cmd(node)
+            cmds.append(" ".join(["gmx", node.__identifier__, cmd_tmp]))
 
-            cmd_tmp = " ".join(f"{name} {value}" for name, value in node_props.items() if name != "Add_Props")
-            cmds.append(cmd_tmp)
-        
-        print("DEBUG", cmds[0], type(cmds[0]))
-        
-        return cmds[0]
-
+        return cmds
 
 
     def generate_bash_script(self):
         script = []
-        cmds = self.fill_cmd()
+        cmds = self.fill_all_cmd()
 
         script.append("#!/bin/bash\n\n")
         script.append("\n\n".join(cmds))
@@ -139,7 +122,7 @@ class ControlPanel(QtWidgets.QWidget):
 
     def generate_python_script(self):
         script = []
-        cmds = self.fill_cmd()
+        cmds = self.fill_all_cmd()
 
         script.append("import subprocess\n\n")
         script.append("\n\n".join(cmds))
@@ -150,7 +133,7 @@ class ControlPanel(QtWidgets.QWidget):
 
 
     def run_gromacs_from_ui(self):
-        for cmd in self.fill_cmd():
+        for cmd in self.fill_all_cmd():
             print("RUN: ", cmd)
             subprocess.run(cmd.split(), check=True)
 
