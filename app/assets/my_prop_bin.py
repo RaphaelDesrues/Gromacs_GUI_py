@@ -1,3 +1,4 @@
+import logging
 from NodeGraphQt.custom_widgets.properties_bin.node_property_widgets import PropertiesBinWidget, NodePropEditorWidget #type: ignore
 from NodeGraphQt import BaseNode # type: ignore
 
@@ -49,30 +50,31 @@ class MyBaseNode(BaseNode):
 class MyPropEditor(NodePropEditorWidget):
     def _read_node(self, node):
         ports = super()._read_node(node)
-
-        # On récupère les labels stockés par add_text_input
+        # Retrieve the labels in add_text_input
         mapping = getattr(node, "_prop_labels", {})
 
         for prop_name, pretty_label in mapping.items():
-            w = self.get_widget(prop_name)
-            if not w:
-                continue
+            try:
+                w = self.get_widget(prop_name)
+                if not w:
+                    continue
 
-            # Accès au grid interne qui contient (QLabel, widget)
-            container = w.parent()
-            grid = getattr(container, "_PropertiesContainer__layout", None)
-            if not grid:
-                continue
+                # Access internal grid that stores: QLabel, widget
+                container = w.parent()
+                grid = getattr(container, "_PropertiesContainer__layout", None)
+                if not grid:
+                    continue
 
-            idx = grid.indexOf(w)
-            if idx < 0:
-                continue
+                idx = grid.indexOf(w)
+                if idx < 0:
+                    continue
 
-            r, c, rs, cs = grid.getItemPosition(idx)
-            item = grid.itemAtPosition(r, 0)  # 0 = colonne label
-            if item and item.widget():
-                item.widget().setText(pretty_label)
-
+                r, c, rs, cs = grid.getItemPosition(idx)
+                item = grid.itemAtPosition(r, 0)  # 0 = column label
+                if item and item.widget():
+                    item.widget().setText(pretty_label)
+            except Exception:
+                logging.exception("Failed to apply pretty label for %s on %s", prop_name, node)
         return ports
 
 

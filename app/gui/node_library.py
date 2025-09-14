@@ -1,7 +1,7 @@
 # Contains the list of the available nodes (defined in node_types.py)
 # 1. Display the nodes
 # 2. Handle the double-clic on nodes -> 
-
+import logging
 from Qt import QtWidgets, QtCore # type: ignore
 
 
@@ -25,7 +25,11 @@ class NodeLibrary():
         '''
         self.widget.clear() # Initialize / Empty the list
         for node_class in self.node_types:
-            # Create item witht the node_class name and point toward the class in the main_window
-            item = QtWidgets.QListWidgetItem(node_class.__name__)
-            item.setData(QtCore.Qt.UserRole, node_class)
-            self.widget.addItem(item)   
+            try:
+                # Create item witht the node_class name and point toward the class in the main_window
+                item = QtWidgets.QListWidgetItem(node_class.__name__)
+                item.setData(QtCore.Qt.UserRole, node_class)
+                self.widget.addItem(item)   
+            except Exception:  
+                logging.exception("Failed to add node class to library: %r", node_class)  
+                continue  

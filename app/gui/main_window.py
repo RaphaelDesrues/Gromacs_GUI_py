@@ -1,15 +1,17 @@
-from genericpath import exists
 import inspect
-from itertools import product
-from sqlite3 import connect
+import logging
+
 from Qt import QtWidgets, QtCore, QtGui # type: ignore
 from NodeGraphQt import NodeGraph, BaseNode # type: ignore
 
+from app.gui import ui_state
 from app.gui.node_library import NodeLibrary
 from app.nodes import node_types
 from app.gui.control_panel import ControlPanel
 from app.gui.cmd_preview import CmdPreview
 from app.assets.my_prop_bin import MyPropertiesBin
+from app.gui.ui_state import UiStateManager
+import json, pathlib, os
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -22,6 +24,9 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Gromacs Node Workflow")
         self.resize(1000, 800)
+
+        
+        self.ui_state = UiStateManager(include_geometry=True, include_state=True)
 
         # Create core widgets
         # Create the central windows to manage nodes
@@ -75,16 +80,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.node_graph.node_selected.connect(self._display_preview)
         
         # Select one, multiple or all nodes
-        self.control_panel.select_one_btn.clicked.connect(self.control_panel.selected_node)
-        self.control_panel.select_many_btn.clicked.connect(self.control_panel.selected_nodes)
-        self.control_panel.select_all_btn.clicked.connect(self.control_panel.select_all_nodes)
+        self.control_panel.select_one_btn.clicked.connect(self._save_ui)
+        self.control_panel.select_many_btn.clicked.connect(self._load_ui)
+        # self.control_panel.select_all_btn.clicked.connect(self.control_panel.select_all_nodes)
         
         # Generate scripts (bash, python)
-        self.control_panel.generate_bash_script_btn.clicked.connect(self.control_panel.generate_bash_script)
-        self.control_panel.generate_python_script_btn.clicked.connect(self.control_panel.generate_python_script)
+        # self.control_panel.generate_bash_script_btn.clicked.connect(self.control_panel.generate_bash_script)
+        # self.control_panel.generate_python_script_btn.clicked.connect(self.control_panel.generate_python_script)
         
         # Run GROMACS locally
-        self.control_panel.run_gromacs_ui.clicked.connect(self.control_panel.run_gromacs_from_ui)
+        # self.control_panel.run_gromacs_ui.clicked.connect(self.control_panel.run_gromacs_from_ui)
 
         # Add additional properties to nodes
         self.node_graph.property_changed.connect(self._on_prop_changed)
@@ -103,6 +108,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _init_ui(self):
         main_splitter = QtWidgets.QSplitter()
+        main_splitter.setObjectName("main_splitter")
+        # print("MAIN8SPLLITER", main_splitter.objectName())
         main_splitter.setOrientation(QtCore.Qt.Horizontal)
         
         # Left: list
@@ -110,6 +117,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Center: vertical splitter
         center_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        center_splitter.setObjectName("center_tabs")
         center_splitter.addWidget(self.node_graph.widget)     # Up
         center_splitter.addWidget(self.cmd_preview)           # Preview of node command
         center_splitter.addWidget(self.control_panel)         # Down
@@ -148,12 +156,6 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{node_class.__identifier__}.{node_class.__name__}",
             name=f"{node_class.NODE_NAME}",
             pos=[200, 200])
-        
-        # for p in node.input_ports():
-        #     try:
-        #         print(f"ACCEPTS {p.name()} ->", node.accepted_port_types(p))
-        #     except Exception as e:
-        #         print("accepted_port_types failed:", e)
 
 
     def _show_props(self, node):
@@ -161,41 +163,50 @@ class MainWindow(QtWidgets.QMainWindow):
         self.props_bin.add_node(node)
 
 
-    def _on_port_connected(self, port_a, port_b):
+    def _on_port_connected(self, port_a, port_b): # Callback when two ports get connected
         """
         Called by NodeGraphQt when two ports get connected.
         Normalize (src=output, dst=input), then copy properties
         according to OUT_PORT/IN_PORT mapping (by port_type).
         """
-        # for attr in dir(port_a):
-        #     if not attr.startswith('__'):
-        #         try:
-        #             print(f"{attr} = {getattr(port_a, attr)}")
-        #         except Exception:
-        #             pass
 
-        # 1) Normalize: ensure src is an output and dst is an input
-        src, dst = port_a, port_b
-        if src.type_() == "in" and dst.type_() == "out":
-            src, dst = dst, src
-            print("Switched ports order")
+        # Normalize: ensure src is an output and dst is an input
+        try:
+            src, dst = port_a, port_b
+            if src.type_() == "in" and dst.type_() == "out":
+                src, dst = dst, src
+                logging.debug("Switched ports order")
 
-        print("Port type: IN", dst.type_(), " OUT", src.type_())
-        print("Port name: ", src.name())
-        print("Port type custom: ", src.port_type)
+            # Read port types (custom attributes you set on your ports)
+            src_type = getattr(src, "port_type", None)
+            dst_type = getattr(dst, "port_type", None)
+            if not src_type or not dst_type:
+                logging.debug("Missing port_type on ports; skip property propagation")
+                return
 
-        # 2) Read port types (custom attributes you set on your ports)
-        src_type = getattr(src, "port_type", None)
-        dst_type = getattr(dst, "port_type", None)
+            # Read the mapping "port_type -> property name" declared on each node
+            src_map = getattr(src.node(), "OUT_PORT", {})
+            dst_map = getattr(dst.node(), "IN_PORT",  {})
 
-        # 3) Read the mapping "port_type -> property name" declared on each node
-        src_map = getattr(src.node(), "OUT_PORT", {})
-        dst_map = getattr(dst.node(), "IN_PORT",  {})
+            # Pick property names and copy value once
+            src_prop = src_map.get(src_type)
+            dst_prop = dst_map.get(dst_type)
+            if not src_prop or not dst_prop:
+                logging.debug("No mapping for %s -> %s: skip property propagation", src_type, dst_type)
 
-        # 4) Pick property names and copy value once
-        src_prop = src_map.get(src_type)
-        dst_prop = dst_map.get(dst_type)
-        print('test', src_prop, dst_prop)
+            # Copy value with safeguards so one bad node does not crash the UI
+            try:
+                val = src.node().get_property(src_prop)
+                dst.node().set_property(dst_prop, val)
+                logging.info("Propagated %s=%r from %s to %s", src_prop, val, src.node(), dst.node())
+            except AttributeError as e: # If node lack expected methods/properties
+                logging.warning("Attribute error during property copy: %s", e)
+            except Exception: # Any unexpected error gets a full traceback
+                logging.exception("Unexpected error while copying properties")
+
+        except Exception:
+            logging.exception("_on_port_connected failed")
+
 
         if src_prop and dst_prop:
             try:
@@ -211,75 +222,145 @@ class MainWindow(QtWidgets.QMainWindow):
     
 
     def _on_prop_changed(self, node, menu_prop_name, prop_value):
-        # menu_prop_name = property name in the menu != property name to add
-        # prop_value = item of the menu = property label to add
-
-        # We process only the properties in the menu
-        if menu_prop_name != "Add_Props" or not prop_value:
-            self._propagate_props(node, menu_prop_name, prop_value)
+        # Process only the properties in the menu
+        try:
+            if menu_prop_name != "Add_Props" or not prop_value:
+                # If not adding a new property, delegate the propagation logic
+                self._propagate_props(node, menu_prop_name, prop_value)
+        except Exception:
+            logging.exception("Propagation failed in _on_prop_changed")
 
         # Retrieve name and value from the dict
         try:
             name, value = node.PREDEFINED_PROPS[prop_value]
-        except Exception:
-            print(f"[WARN] Key '{prop_value}' not in PREDEFINED_PROPS of {node}")
+        except KeyError:
+            # Triggered when 'prop_value' is not a key in PREDEFINED_PROPS.
+            logging.warning("Key '%s' no in PREDEFINED_PROPS of '%s'", prop_value, node)
             return
 
         # Avoid duplicates
-        node_props = node.properties().get("custom", {})
-        if name in node_props:
-            print(f"[INFO] Property '{name}' already exists in {node}, pass")
-            # node.set_property("Add_Props", None)
+        try:
+            node_props = node.properties().get("custom", {})
+            if name in node_props:
+                logging.info("Property '%s' already exists in %s, skipping", name, node)
+                # node.set_property("Add_Props", None)
+                return
+            # Add the proprety using MyBaseNode.add_text_input
+            node.add_text_input(name=name, label=prop_value, text=value)
+            node.hide_widget(name=name, push_undo=False)
+            logging.info("Property added: %s on %s", name, node)
+
+            # Reset the menu
+            node.set_property("Add_Props", None)
+        except Exception:
+            logging.exception("Failed to add or setup property '%s' on %s", name, node)
             return
-
-        # Add the proprety using MyBaseNode.add_text_input
-        node.add_text_input(name=name, label=prop_value, text=value)
-        node.hide_widget(name=name, push_undo=False)
-        print("[INFO] Property added")
-
-        # Check
-        # props_after = node.properties().get("custom", {})
-        # ok = props_after.get(prop_value, None)
-        # print(f"[CHECK] '{prop_value}' enregistré =", repr(ok))
-
-        # Reset the menu
-        node.set_property("Add_Props", None)
 
         # Refresh the property bin
         try:
             self.props_bin.remove_node(node)
             self.props_bin.add_node(node)
         except Exception as e:
-            print("[WARN] Refresh props_bin:", e)
+            logging.warning("Refresh props_bin failed for %s: %s", node, e)
+
 
         # Refresh the preview
-        if hasattr(self, "update_preview"):
-            # self.update_preview()
-            self.cmd_preview.update_preview(self.control_panel.fill_all_cmd(), node)
-
-        # Debug signal
-        # print("=== property_changed ===")
-        # print("Node:", node)
-        # print("name:", menu_prop_name)
-        # print("name:", name)
-        # print("value:", value)
-        # print("========================")
+        try:
+            if hasattr(self, "update_preview"):
+                # self.update_preview()
+                self.cmd_preview.update_preview(self.control_panel.fill_all_cmd(), node)
+        except Exception:
+            logging.exception("Failed to update preview after property change")
 
 
     def _propagate_props(self, node, menu_prop_name, prop_value):
-        print("NODE:", node)
-        print("PROP_NAME:", menu_prop_name)
+        
+        try:
+            src_dict = getattr(node, "OUT_PORT", {})
+            src_prop_name = next((k for k, v in src_dict.items() if v == menu_prop_name), None)
+            if not src_prop_name:
+                logging.debug("No OUT_PORT mapping for menu '%s' on %s", menu_prop_name, node)
+                return
+        except Exception: 
+            logging.exception("Failed to resolve source mapping in _propagate_props")
+            return 
 
-        src_outputs = node.outputs()
-        dst_nodes = node.connected_output_nodes()
+        # Retrieve all outputs of the source node
+        try:
+            src_outputs = node.outputs()
+            if not isinstance(src_outputs, dict):
+                logging.warning("node.outputs() should return a dict, got %r", type(src_outputs))
+        except Exception: 
+            logging.exception("Failed to retrieve node outputs in _propagate_props")
+            return 
 
-        if not any(dst_nodes.values()):
-            return
+        # Iterate over each output port of the source node
+        for port_name, port in src_outputs.items():
+            try:
+                dst_ports = port.connected_ports() # List of connected ports
+            except Exception as e:
+                logging.warning("connected_ports() failed on %s.%s: %s", node, port_name, e)
+                continue
+            
+            # For every destination port connected to this source output
+            for dst_port in dst_ports:
+                # Retrieve corresponding node from the port
+                try:
+                    dst_node = dst_port.node()
+                    dst_dict = getattr(dst_node, "IN_PORT", {})
+                    dst_prop_name = dst_dict.get(src_prop_name)
+                    if not dst_prop_name:
+                        logging.debug("No IN_PORT mapping for '%s' on %s", src_prop_name, dst_node)
+                        continue
+                except Exception:
+                    logging.exception("Failed to retrieve port of %s", dst_node)
+                    continue
+                
+                try:
+                    dst_node.set_property(dst_prop_name, prop_value)
+                    logging.info("Propagated %s=%r -> %s", dst_prop_name, prop_value, dst_node)
+                except AttributeError as e:
+                    logging.warning("Destination node API error on %s: %s", dst_node, e)
+                    continue
+                except Exception:
+                    logging.exception("Failed to set '%s' on %s", dst_prop_name, dst_node)
+                    continue
 
-        for connected_nodes in dst_nodes.values():
-            for connected_node in connected_nodes:
-                for port_out, port_in in product(src_outputs.values(), connected_node.inputs().values()):
-                    print("TEST", port_out, port_in)
-                    self._on_port_connected(port_out, port_in)
+
+    def _save_ui(self):
+        logging.info("Saving UI state + NodeGraph session...")
+        path = pathlib.Path("/home/rapha/file_bundle.json")
+        
+        # 1) Save graph
+        # Use serialize instead of save_session here because we need to modify the json 
+        graph_data = self.node_graph.serialize_session()
+        # self.node_graph.save_session(path)
+
+        graph_data.get("graph", {}).pop("accept_connection_types", None)
+        graph_data.get("graph", {}).pop("reject_connection_types", None)
+        for n in graph_data.get("nodes", {}).values():
+            n.pop("accept_connection_types", None)
+            n.pop("reject_connection_types", None)
+
+        # 2) Save UI state
+        ui_data = self.ui_state.capture(self)
+        bundle = {"graph": graph_data, "ui": ui_data}
+        path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+        logging.info("UI state saved at %s", path)
+
+
+    def _load_ui(self):
+        path = pathlib.Path("/home/rapha/file_bundle.json")
+        logging.info("Loading UI state + NodeGraph session from: %s", path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        
+        # 1) Load graph
+        self.node_graph.clear_session()
+        self.node_graph.deserialize_session(data["graph"])
+
+        # 2) Load UI
+        self.ui_state.restore(self, data["ui"])
+        logging.info("UI state loaded")
+
 
 

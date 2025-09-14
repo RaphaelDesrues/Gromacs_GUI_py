@@ -1,6 +1,6 @@
 # Handle the properties of the node
 # Display and update the node properties
-
+import logging
 from Qt import QtWidgets # type: ignore
 
 
@@ -47,7 +47,10 @@ class NodeProperties(QtWidgets.QWidget):
         edit = self.sender()
         prop_name = edit.property("prop_name")
         new_value = edit.text()
-        if self.current_node:
-            self.current_node.set_property(prop_name, new_value)
+        try:
+            if self.current_node:
+                self.current_node.set_property(prop_name, new_value)
+        except Exception:
+            logging.exception("Failed to update property '%s' on %s", prop_name, self.current_node) 
 
     

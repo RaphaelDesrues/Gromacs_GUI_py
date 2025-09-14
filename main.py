@@ -1,7 +1,9 @@
+import logging
 from Qt import QtWidgets # type: ignore
 from app.gui.main_window import MainWindow
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     app = QtWidgets.QApplication([])
     # Shadow theme
     # try:

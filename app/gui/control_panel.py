@@ -1,4 +1,3 @@
-from textwrap import fill
 from Qt import QtWidgets # type: ignore
 from app.export.workflow_exporter import map_props, MAPPING
 import subprocess
@@ -108,34 +107,34 @@ class ControlPanel(QtWidgets.QWidget):
         return cmds
 
 
-    def generate_bash_script(self):
-        script = []
-        cmds = self.fill_all_cmd()
+    # def generate_bash_script(self):
+    #     script = []
+    #     cmds = self.fill_all_cmd()
 
-        script.append("#!/bin/bash\n\n")
-        script.append("\n\n".join(cmds))
+    #     script.append("#!/bin/bash\n\n")
+    #     script.append("\n\n".join(cmds))
 
-        with open("run_gromacs.sh", "w") as f:
-            f.write("".join(script))
-            print(f"Bash script generated at {"run_gromacs.sh"}")
-
-
-    def generate_python_script(self):
-        script = []
-        cmds = self.fill_all_cmd()
-
-        script.append("import subprocess\n\n")
-        script.append("\n\n".join(cmds))
-
-        with open("run_gromacs.py", "w") as f:
-            f.write("".join(script))
-            print(f"Python script generated at {"run_gromacs.py"}")
+    #     with open("run_gromacs.sh", "w") as f:
+    #         f.write("".join(script))
+    #         print(f"Bash script generated at {"run_gromacs.sh"}")
 
 
-    def run_gromacs_from_ui(self):
-        for cmd in self.fill_all_cmd():
-            print("RUN: ", cmd)
-            subprocess.run(cmd.split(), check=True)
+    # def generate_python_script(self):
+    #     script = []
+    #     cmds = self.fill_all_cmd()
+
+    #     script.append("import subprocess\n\n")
+    #     script.append("\n\n".join(cmds))
+
+    #     with open("run_gromacs.py", "w") as f:
+    #         f.write("".join(script))
+    #         print(f"Python script generated at {"run_gromacs.py"}")
+
+
+    # def run_gromacs_from_ui(self):
+    #     for cmd in self.fill_all_cmd():
+    #         print("RUN: ", cmd)
+    #         subprocess.run(cmd.split(), check=True)
 
 
 

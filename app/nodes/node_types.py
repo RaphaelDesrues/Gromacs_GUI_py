@@ -1,7 +1,6 @@
 # self.add_text_input(name="f_input_pdb", label="Input PDB", text="input.pdb")
 
 from itertools import product
-from re import A
 from app.assets.my_prop_bin import MyBaseNode
 
 
@@ -32,12 +31,14 @@ class AcceptsMixin:
             for port_name, port_type, node_type in product(out_names, self.PORT_TYPES, self.ALL_NODES_TYPE):
                 self.add_accept_port_type(
                     in_port,
-                    {
-                        "port_name": port_name,
-                        "port_type": port_type,
-                        "node_type": node_type,
-                    },
+                    dict(
+                        port_name=port_name,
+                        port_type=port_type,
+                        node_type=node_type
+                    ),
                 )
+
+
 
     def hide_all_props(self):
         [
@@ -64,6 +65,9 @@ class Gromacspdb2gmx(MyBaseNode, AcceptsMixin):
                 "Missing atoms (-missing)": ("-missing", ""),
                 "No H-bond constraints (-heavyh)": ("-heavyh", "")
     }
+
+    OUT_PORT = {"gro_file": "-o",
+                "top_file": "-p"}
 
     def __init__(self):
         super().__init__()
@@ -103,6 +107,9 @@ class Gromacseditconf(MyBaseNode, AcceptsMixin):
         "Index File (-n)": ("-n", "")
     }
 
+    IN_PORT = {"gro_file": "-f"}
+    OUT_PORT = {"gro_file": "-o"}
+
     def __init__(self):
         super().__init__()
 
@@ -139,6 +146,11 @@ class Gromacssolvate(MyBaseNode, AcceptsMixin):
             "Solvent radius nm (-radius)": ("-radius", ""),
             "Try to keep solute (-shell)": ("-shell", "")
     }
+
+    IN_PORT = {"gro_file": "-f",
+               "top_file": "-p"}
+    OUT_PORT = {"gro_file": "-o",
+                "top_file": "-p"}
 
     def __init__(self):
         super().__init__()
@@ -178,6 +190,10 @@ class Gromacsgenion(MyBaseNode, AcceptsMixin):
             "Index file (-n)": ("-n", ""),
     }
 
+    IN_PORT = {"trp_file": "-s",
+               "top_file": "-p"}
+    OUT_PORT = {"gro_file": "-o",
+                "top_file": "-p"}
 
     def __init__(self):
         super().__init__()
@@ -222,6 +238,11 @@ class Gromacsgrompp(MyBaseNode, AcceptsMixin):
             "Energy groups table (-table)": ("-table", "")
     }
 
+    IN_PORT = {"gro_file": "-c",
+               "top_file": "-p",
+               "mdp_file": "-f"}
+    OUT_PORT = {"tpr_file": "-o"}
+
     def __init__(self):
         super().__init__()
 
@@ -258,6 +279,12 @@ class Gromacsmdrun(MyBaseNode, AcceptsMixin):
             "Maxh (-maxh)": ("-maxh", ""),
             "Restrain groups (-rcon)": ("-rcon", ""),
     }
+
+    IN_PORT = {"gro_file": "-s"}
+    OUT_PORT = {"gro_file": "-o",
+                "cpt_file": "-cp",
+                "xtc_file": "-p",
+                "top_file": "-f"}
 
     def __init__(self):
         super().__init__()
