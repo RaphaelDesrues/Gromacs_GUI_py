@@ -147,7 +147,7 @@ class Gromacssolvate(MyBaseNode, AcceptsMixin):
             "Try to keep solute (-shell)": ("-shell", "")
     }
 
-    IN_PORT = {"gro_file": "-f",
+    IN_PORT = {"gro_file": "-cp",
                "top_file": "-p"}
     OUT_PORT = {"gro_file": "-o",
                 "top_file": "-p"}
@@ -162,7 +162,7 @@ class Gromacssolvate(MyBaseNode, AcceptsMixin):
 
         # Common flags
         self.add_text_input(name="-cp", label="Input config (GRO)", text="box.gro")
-        self.add_text_input(name="-cs", label="Solvent config", text="spc216.gro")
+        # self.add_text_input(name="-cs", label="Solvent config", text="spc216.gro")
         self.add_text_input(name="-o", label="Output (GRO)", text="solv.gro")
         self.add_text_input(name="-p", label="Topology (TOP)", text="topol.top")
 
