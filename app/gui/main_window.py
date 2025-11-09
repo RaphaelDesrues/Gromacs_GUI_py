@@ -1,3 +1,4 @@
+from curses import KEY_SAVE
 import inspect
 import logging
 from operator import inv
@@ -107,6 +108,12 @@ class MainWindow(QtWidgets.QMainWindow):
             QtGui.QKeySequence.Delete,  # Suppr key
             self,
             activated=lambda: self.node_graph.delete_nodes(self.node_graph.selected_nodes())
+        )
+
+        QtWidgets.QShortcut(
+            QtGui.QKeySequence.InsertParagraphSeparator,  # Enter key
+            self,
+            activated=lambda: self._on_prop_changed()
         )
 
 
@@ -362,19 +369,27 @@ class MainWindow(QtWidgets.QMainWindow):
         ui_data = self.ui_state.capture(self)
 
         # 3) Save custom_props in specific json key
-        added_custom = {}
+        added_by_name = {}
+
         for node in self.node_graph.all_nodes():
-            custom = node.properties().get("custom", {})
-            predef_key = [v[0] for v in node.PREDEFINED_PROPS.values()]
+            predef_keys = {v[0] for v in node.PREDEFINED_PROPS.values()}
+            custom_src = node.properties().get("custom", {})
 
-            for key in predef_key:
-                if key in custom.keys():
-                    added_custom[key] = custom[key]
-                    del custom[key]
+            moved = {k: v for k, v in custom_src.items() if k in predef_keys}
+            if moved:
+                added_by_name[node.name()] = moved
 
-            for hex_id, node_val in graph_data["nodes"].items():
-                if node_val["type_"] == node.type_:
-                    graph_data["nodes"][hex_id]["add_custom"] = added_custom
+        for node_dict in graph_data.get("nodes", {}).values():
+            name = node_dict.get("name")
+            moved = added_by_name.get(name)
+            if not moved:
+                continue
+
+            node_dict["add_custom"] = moved
+
+            custom_json = node_dict.setdefault("custom", {})
+            for k in moved.keys():
+                custom_json.pop(k, None)
 
         bundle = {"graph": graph_data, "ui": ui_data}
         path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
@@ -391,22 +406,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.node_graph.deserialize_session(data["graph"])
 
         # Take the Add props out of the json to avoid deserialize problems
-        for hexid, node_data in data["graph"]["nodes"].items():
-            add_customs = node_data.get("add_custom", {})
-            node = self.node_graph.get_node_by_name(data["graph"]["nodes"][hexid]["name"])
+        for node_dict in data["graph"]["nodes"].values():
+            node_name = node_dict.get("name")
+            add_customs = node_dict.get("add_custom", {})
 
-            if not node or not add_customs:
+            if not add_customs:
+                continue
+
+            node = self.node_graph.get_node_by_name(node_name)
+            if not node:
+                logging.warning("Node '%s' not found while loading add_custom", node_name)
                 continue
 
             for key_custom, value_custom in add_customs.items():
+
                 inverse_map = {v[0]: k for k, v in node.PREDEFINED_PROPS.items()}
-                lbl = inverse_map[key_custom]
-                node.add_text_input(name=key_custom, label=lbl, text=value_custom)
-                node.hide_widget(key_custom)
+                lbl = inverse_map.get(key_custom, key_custom)
+
+                try:
+                    node.add_text_input(name=key_custom, label=lbl, text=value_custom)
+                    node.hide_widget(key_custom)
+                    logging.info("Restored custom property '%s' for node '%s'", key_custom, node_name)
+                except Exception:
+                    logging.exception("Failed to restore property '%s' on node '%s'", key_custom, node_name)
 
         # 2) Load UI
         self.ui_state.restore(self, data["ui"])
-
+        
+        # 3) Show full screen
+        self.showNormal()
+        self.setWindowState(self.windowState() | QtCore.Qt.WindowMaximized)
+        self.raise_()
+        self.activateWindow()
+        
         logging.info("UI state loaded")
 
 

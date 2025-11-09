@@ -1,6 +1,7 @@
 import logging
 from NodeGraphQt.custom_widgets.properties_bin.node_property_widgets import PropertiesBinWidget, NodePropEditorWidget #type: ignore
 from NodeGraphQt import BaseNode # type: ignore
+from Qt import QtCore, QtWidgets
 
 
 # -----------------------------
@@ -75,6 +76,32 @@ class MyPropEditor(NodePropEditorWidget):
                     item.widget().setText(pretty_label)
             except Exception:
                 logging.exception("Failed to apply pretty label for %s on %s", prop_name, node)
+        
+        # Colors by role based on IN_PORT / OUT_PORT mapping
+        try:
+            in_flags = set((getattr(node, "IN_PORT", {}) or {}).values())
+            out_flags = set((getattr(node, "OUT_PORT", {}) or {}).values())
+            props = node.properties().get("custom", {})
+
+            for name in props.keys():
+                w = self.get_widget(name)
+                if not w:
+                    continue
+
+                role = "in" if name in in_flags else ("out" if name in out_flags else "param")
+
+                w.setProperty("propRole", role)
+
+                # Force Qt to apply sytle
+                style = w.style()
+                if style:
+                    style.unpolish(w)
+                    style.polish(w)
+                w.update()
+
+        except Exception:
+            logging.exception("Failed to tag custom properties for node %s", node)
+
         return ports
 
 

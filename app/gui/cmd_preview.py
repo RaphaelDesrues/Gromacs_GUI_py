@@ -6,11 +6,13 @@ class CmdPreview(QtWidgets.QWidget):
 
     def __init__(self, node_graph):
         super().__init__()
+        self.setObjectName("CmdPreview") # For qss use
         self.node_graph = node_graph
         self.layout = QtWidgets.QVBoxLayout(self)
         # self.text = QtWidgets.QPlainTextEdit()
         # self.text.setReadOnly(True)
         self.text = QtWidgets.QTextEdit(readOnly=True)
+        self.text.setObjectName("CmdPreviewText") # For qss use
         font = QtGui.QFont("Monospace")
         font.setStyleHint(QtGui.QFont.TypeWriter)
         self.text.setFont(font)
