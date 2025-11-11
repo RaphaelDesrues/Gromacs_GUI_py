@@ -5,20 +5,30 @@ import base64
 
 
 class UiStateManager:
-    """Capture/restore UI state
-
-    - Use objectName of specific widgets (splitters/tabs/headers)
-    - Captures window geometry/state optionally
-    - Returns a dict structure suitable for JSON
+    """UiStateManager is a class that manages the state of a user interface (UI) by capturing and restoring its geometry and state.
+    
+    Attributes:
+        widgets_names (dict): A dictionary containing lists of widget names categorized by type (splitters, tabs, headers).
+        include_geometry (bool): A flag indicating whether to include geometry information in the captured state. Defaults to True.
+        include_state (bool): A flag indicating whether to include state information in the captured state. Defaults to True.
+        schema_version (str): The version of the schema used for the state. Defaults to "1".
+    
+    Methods:
+        capture(main_window):
+            Captures the current UI state from the provided main window and returns it as a dictionary ready for JSON serialization.
+    
+        restore(main_window, state):
+            Restores the UI state of the provided main window from the given state dictionary.
+    
+        _encode_bytes(data):
+            Encodes the given data into a base64 string.
+    
+        _decode_bytes(data_b64):
+            Decodes a base64 string back into a QByteArray.
     """
     def __init__(self, include_geometry = True, include_state = True, schema_version = "1"):
 
         self.widgets_names = {"splitters": [], "tabs": [], "headers": []}
-
-        # if widget_names:
-        #     for key in self.widget_names.keys():
-        #         if key in widget_names and isinstance(widget_names[key], list):
-        #             self.widget_names[key] = widget_names[key]
 
         self.include_geometry = include_geometry
         self.include_state = include_state
@@ -26,8 +36,22 @@ class UiStateManager:
 
 
     def capture(self, main_window):
-        """Capture UI state from main_window
-        Returns a dict ready to be serialized to JSON
+        """Captures the state of the main window and its child widgets.
+        
+        This method collects various aspects of the main window's state, including
+        geometry, state, splitters, tabs, and headers, and returns them in a structured
+        dictionary format.
+        
+        Args:
+            main_window (QMainWindow): The main window from which to capture the state.
+        
+        Returns:
+            dict: A dictionary containing the captured state, including:
+                - version (str): The schema version of the state.
+                - window (dict): A dictionary with the window's geometry and state.
+                - splitters (dict): A dictionary mapping splitter object names to their saved states.
+                - tabs (dict): A dictionary mapping tab widget object names to their current index.
+                - headers (dict): A dictionary mapping item view object names to their header states.
         """
         # Base skeleton to save the state
         state = {
@@ -60,6 +84,20 @@ class UiStateManager:
 
         # Headers
         def _header_view(view):
+            """Retrieve the header from a given view object.
+            
+            This function checks if the provided view object has a `header` method or a 
+            `horizontalHeader` method. If either method is callable, it invokes the method 
+            and returns the result if it is not `None`. If neither method is available or 
+            both return `None`, the function returns `None`.
+            
+            Args:
+                view: An object that may have a `header` or `horizontalHeader` method.
+            
+            Returns:
+                The result of the `header` or `horizontalHeader` method if it is callable 
+                and returns a non-None value; otherwise, returns `None`.
+            """
             if hasattr(view, "header") and callable(view.header):
                 h = view.header()
                 if h is not None:
@@ -81,6 +119,24 @@ class UiStateManager:
             
 
     def restore(self, main_window, state: Dict[str, Any]) -> None:
+        """Restores the state of the main window and its components from a given state dictionary.
+        
+        Args:
+            main_window (QMainWindow): The main window instance to restore the state for.
+            state (Dict[str, Any]): A dictionary containing the state information to restore. 
+                It should include the following keys:
+                - "window": A dictionary with keys "geometry" (base64 encoded) and "state" (base64 encoded).
+                - "splitters": A dictionary mapping splitter names to their encoded states (base64 encoded).
+                - "tabs": A dictionary mapping tab widget names to their current index.
+                - "headers": A dictionary mapping view names to their header states (base64 encoded).
+        
+        Returns:
+            None: This function does not return a value.
+        
+        Notes:
+            - The function handles exceptions silently, meaning that if any restoration fails, it will continue with the next item.
+            - The state dictionary must be a valid dictionary; otherwise, the function will return immediately without making any changes.
+        """
         if not isinstance(state, dict):
             return
 
@@ -132,6 +188,20 @@ class UiStateManager:
 
         # Headers
         def _header_view(view):
+            """Retrieve the header view from a given view object.
+            
+            This function checks if the provided view object has a `header` method or a 
+            `horizontalHeader` method. If either method is callable, it invokes the method 
+            and returns the result if it is not `None`. If neither method is available or 
+            both return `None`, the function returns `None`.
+            
+            Args:
+                view: An object that may have a `header` or `horizontalHeader` method.
+            
+            Returns:
+                The result of the `header` or `horizontalHeader` method if callable and 
+                not `None`, otherwise `None`.
+            """
             if hasattr(view, "header") and callable(view.header):
                 h = view.header()
                 if h is not None:
@@ -160,6 +230,16 @@ class UiStateManager:
 
     @staticmethod
     def _encode_bytes(data) -> str:
+        """Encode the given data into a Base64 string.
+        
+        This function takes a QByteArray or a bytes/bytearray object and encodes it into a Base64 string. If the input is not of the expected type, it returns an empty string.
+        
+        Args:
+            data (QByteArray | bytes | bytearray): The data to be encoded. Can be a QByteArray, bytes, or bytearray.
+        
+        Returns:
+            str: The Base64 encoded string representation of the input data, or an empty string if the input is not valid.
+        """
         if isinstance(data, QByteArray):
             raw = bytes(data)
         else:
@@ -168,6 +248,14 @@ class UiStateManager:
     
     @staticmethod
     def _decode_bytes(data_b64: str) -> QByteArray:
+        """Decode a base64 encoded string into a QByteArray.
+        
+        Args:
+            data_b64 (str): The base64 encoded string to decode. If the string is empty, an empty QByteArray is returned.
+        
+        Returns:
+            QByteArray: The decoded QByteArray containing the raw bytes. If decoding fails or the input is empty, an empty QByteArray is returned.
+        """
         try:
             raw = base64.b64decode(data_b64) if data_b64 else b""
         except Exception:

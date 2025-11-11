@@ -1,7 +1,5 @@
-from curses import KEY_SAVE
 import inspect
 import logging
-from operator import inv
 
 from Qt import QtWidgets, QtCore, QtGui # type: ignore
 from NodeGraphQt import NodeGraph, BaseNode # type: ignore
@@ -13,11 +11,71 @@ from app.gui.control_panel import ControlPanel, GromacsPanel, fill_cmd
 from app.gui.cmd_preview import CmdPreview
 from app.assets.my_prop_bin import MyPropertiesBin
 from app.gui.ui_state import UiStateManager
-import json, pathlib, os
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    """MainWindow serves as the central controller of the node-based graphical workflow interface.  
+    It manages the node graph, property panels, and control tools, coordinating the interaction 
+    between nodes, their visual representations, and backend logic.
 
+    This class extends `QtWidgets.QMainWindow` and acts as the primary GUI container that 
+    integrates all major components of the workflow system, including the node canvas, 
+    property editor, command preview, and control panels.
+
+    Attributes:
+        node_graph (NodeGraph):
+            The main graph canvas handling node creation, connection management, and serialization.
+        
+        node_list (NodeLibrary):
+            The library widget listing available node types for insertion into the graph.
+
+        props_bin (MyPropertiesBin):
+            The dynamic property editor showing editable parameters for the selected node.
+
+        control_panel (ControlPanel):
+            The panel providing workflow-level actions such as save/load, script generation, and refresh.
+
+        cmd_preview (CmdPreview):
+            Displays the generated command-line string that corresponds to the selected node’s configuration.
+
+        gromacs_panel (GromacsPanel):
+            Reserved extension panel for simulation-related tasks.
+
+        ui_state (UiStateManager):
+            Manages window layout, splitter geometry, and UI restoration between sessions.
+
+    Methods:
+        _init_ui():
+            Assembles the main window layout, including the node graph canvas, property bin, 
+            and bottom control tabs. Handles splitter proportions and visibility rules.
+
+        _add_node_on_click(item):
+            Triggered when a node is double-clicked from the node list. Creates and places 
+            an instance of that node on the graph canvas.
+
+        _show_props(node):
+            Displays the property editor for the specified node on the right-hand side panel.
+
+        _on_port_connected(port_a, port_b):
+            Handles the event when two ports are connected.
+            Normalizes direction (output → input) and propagates properties between nodes 
+            based on declared port types and mappings in `IN_PORTS` / `OUT_PORTS`.
+
+        _display_preview(node):
+            Updates the live command preview corresponding to the currently selected or edited node.
+
+        _on_prop_changed(node, menu_prop_name, prop_value):
+            Handles property changes within a node.
+            If the change comes from the optional property menu, dynamically adds the corresponding 
+            input field or combo box; otherwise, propagates the value to connected nodes.
+
+        _propagate_props(node, menu_prop_name, prop_value):
+            Propagates the updated property value from one node to all connected nodes 
+            by resolving matching input/output port definitions.
+
+    Overall, MainWindow serves as the event hub for user interaction — linking UI widgets, 
+    node logic, and real-time command generation into a cohesive workflow environment.
+    """
     def __init__(self):
 
         # -------------------------
@@ -59,7 +117,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.props_bin = MyPropertiesBin(node_graph=self.node_graph)
 
         # Add control panel
-        self.control_panel = ControlPanel(self.node_graph)
+        self.control_panel = ControlPanel(self.node_graph, self.ui_state)
 
         # Add command preview
         self.cmd_preview = CmdPreview(self.node_graph)
@@ -95,9 +153,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.control_panel.generate_python_script_btn.clicked.connect(self.control_panel.generate_python_script)
 
         # Save and Load session (UI + NodeGraph)
-        self.control_panel.save_session.clicked.connect(self._save_ui)
-        self.control_panel.load_session.clicked.connect(self._load_ui)
-        self.control_panel.refresh_session.clicked.connect(self._refresh_ui)
+        self.control_panel.save_session.clicked.connect(self.control_panel._save_ui)
+        self.control_panel.load_session.clicked.connect(self.control_panel._load_ui)
+        self.control_panel.refresh_session.clicked.connect(self.control_panel._refresh_ui)
 
 
         # -------------------------
@@ -113,7 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QShortcut(
             QtGui.QKeySequence.InsertParagraphSeparator,  # Enter key
             self,
-            activated=lambda: self._on_prop_changed()
+            activated=lambda: self._display_preview()
         )
 
 
@@ -125,7 +183,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _init_ui(self):
         main_splitter = QtWidgets.QSplitter()
         main_splitter.setObjectName("main_splitter")
-        # print("MAIN8SPLLITER", main_splitter.objectName())
         main_splitter.setOrientation(QtCore.Qt.Horizontal)
 
         # Left: list
@@ -233,9 +290,53 @@ class MainWindow(QtWidgets.QMainWindow):
         if src_prop and dst_prop:
             try:
                 val = src.node().get_property(src_prop)
-                dst.node().set_property(dst_prop, val)  # updates model + UI signals
+                dst.node().set_property(dst_prop, val)  
             except Exception:
                 pass
+
+
+    def _on_port_connected(self, port_a, port_b): # Callback when two ports get connected
+        try:
+            # Normalize: ensure src is an output and dst is an input
+            src, dst = port_a, port_b
+            if src.type_() == "in" and dst.type_() == "out":
+                src, dst = dst, src
+                logging.debug("Switched ports order (src/dst)")
+
+            # Read port types (custom attributes you set on your ports)
+            src_type = getattr(src, "port_type", None)
+            dst_type = getattr(dst, "port_type", None)
+            if not src_type or not dst_type:
+                logging.debug("Missing port_type on ports; skip propagation")
+                return
+
+            # Map the IN_PORTS/OUT_PORTS declared on each node
+            src_out_ports = getattr(src.node(), "OUT_PORTS", {}) or {}
+            dst_in_ports = getattr(dst.node(), "IN_PORTS", {}) or {}
+
+            dst_map = {port_type: flag for flag, (_name, port_type, *_rest) in dst_in_ports.items()}
+            src_map = {port_type: flag for flag, (_name, port_type) in src_out_ports.items()}
+
+            src_flag = src_map.get(src_type)
+            dst_flag = dst_map.get(dst_type)
+            if not src_flag or not dst_flag:
+                logging.debug("No mapping for %s -> %s; skip propagation", src_type, dst_type)
+                return
+
+            try:
+                val = src.node().get_property(src_flag)
+            except Exception:
+                logging.exception("Failed to read property '%s' from %s", src_flag, src.node())
+                return
+
+            try:
+                dst.node().set_property(dst_flag, val)
+                logging.info("Propagated %s=%r from %s to %s", dst_flag, val, src.node(), dst.node())
+            except Exception:
+                logging.exception("Failed to write property '%s' on %s", dst_flag, dst.node())
+
+        except Exception: # Any unexpected error gets a full traceback
+            logging.exception("_on_port_connected failed")
 
 
     def _display_preview(self, node):
@@ -244,56 +345,50 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def _on_prop_changed(self, node, menu_prop_name, prop_value):
-        # Process only the properties in the menu
-        try:
-            if menu_prop_name != "Add_Props" or not prop_value:
-                # If not adding a new property, delegate the propagation logic
+        # 1) If not optional_props → just propagate
+        if menu_prop_name != "Add optional property" or not prop_value:
+            try:
                 self._propagate_props(node, menu_prop_name, prop_value)
-        except Exception:
-            logging.exception("Propagation failed in _on_prop_changed")
-
-        # Retrieve name and value from the dict
-        try:
-            name, value = node.PREDEFINED_PROPS[prop_value]
-        except KeyError:
-            # Triggered when 'prop_value' is not a key in PREDEFINED_PROPS.
-            logging.warning("Key '%s' no in PREDEFINED_PROPS of '%s'", prop_value, node)
+            except Exception:
+                logging.exception("Propagation failed in _on_prop_changed")
             return
 
-        # Avoid duplicates
+        # 2) If optional_props selected → add the optional property
         try:
-            node_props = node.properties().get("custom", {})
-            if name in node_props:
-                logging.info("Property '%s' already exists in %s, skipping", name, node)
-                # node.set_property("Add_Props", None)
+            label_to_key = getattr(node, "_opt_label_to_key", {})
+            key = label_to_key.get(prop_value) 
+
+            if not key or not hasattr(node, "OPTIONAL_PROPS"):
+                logging.warning("Invalid optional prop selection: %r", prop_value)
+                node.set_property("Add optional property", None)
                 return
-            # Add the proprety using MyBaseNode.add_text_input
-            node.add_text_input(name=name, label=prop_value, text=value)
-            node.hide_widget(name=name, push_undo=False)
-            logging.info("Property added: %s on %s", name, node)
 
-            # Reset the menu
-            node.set_property("Add_Props", None)
-        except Exception:
-            logging.exception("Failed to add or setup property '%s' on %s", name, node)
-            return
+            label, default = node.OPTIONAL_PROPS[key]
 
-        # Refresh the property bin
-        try:
+            # Avoid double
+            if key in node.properties().get("custom", {}):
+                logging.info("Property '%s' already exists in %s, skipping", key, node)
+                node.set_property("Add optional property", None)
+                return
+
+            # Add the correct widget
+            if isinstance(default, (list, tuple)):
+                node.add_combo_menu(name=key, label=label, items=default)
+            else:
+                node._add_text_input(name=key, label=label, text=default) # Use homemade _add_text_input
+            
+            node.hide_widget(key, push_undo=False)
+            node.set_property("Added optional property", None)
+            logging.info("Added optional property '%s' on %s", key, node)
+
+            # Refresh the panel view
             self.props_bin.remove_node(node)
             self.props_bin.add_node(node)
-        except Exception as e:
-            logging.warning("Refresh props_bin failed for %s: %s", node, e)
+            self._display_preview(node=node)
 
+        except Exception:
+            logging.exception("Failed to add or setup optional property '%s' on %s", prop_value, node)
 
-        # Refresh the preview
-        # try:
-        #     if hasattr(self, "update_preview"):
-        #         # self.update_preview()
-        #         self.cmd_preview.update_preview(self.control_panel.fill_all_cmd(), node)
-        # except Exception:
-        #     logging.exception("Failed to update preview after property change")
-        self._display_preview(node=node)
 
 
     def _propagate_props(self, node, menu_prop_name, prop_value):
@@ -348,100 +443,3 @@ class MainWindow(QtWidgets.QMainWindow):
                 except Exception:
                     logging.exception("Failed to set '%s' on %s", dst_prop_name, dst_node)
                     continue
-
-
-    def _save_ui(self):
-        logging.info("Saving UI state + NodeGraph session...")
-        path = pathlib.Path("/home/rapha/file_bundle.json")
-
-        # 1) Save graph
-        # Use serialize instead of save_session here because we need to modify the json
-        graph_data = self.node_graph.serialize_session()
-        # self.node_graph.save_session(path)
-
-        graph_data.get("graph", {}).pop("accept_connection_types", None)
-        graph_data.get("graph", {}).pop("reject_connection_types", None)
-        for n in graph_data.get("nodes", {}).values():
-            n.pop("accept_connection_types", None)
-            n.pop("reject_connection_types", None)
-
-        # 2) Save UI state
-        ui_data = self.ui_state.capture(self)
-
-        # 3) Save custom_props in specific json key
-        added_by_name = {}
-
-        for node in self.node_graph.all_nodes():
-            predef_keys = {v[0] for v in node.PREDEFINED_PROPS.values()}
-            custom_src = node.properties().get("custom", {})
-
-            moved = {k: v for k, v in custom_src.items() if k in predef_keys}
-            if moved:
-                added_by_name[node.name()] = moved
-
-        for node_dict in graph_data.get("nodes", {}).values():
-            name = node_dict.get("name")
-            moved = added_by_name.get(name)
-            if not moved:
-                continue
-
-            node_dict["add_custom"] = moved
-
-            custom_json = node_dict.setdefault("custom", {})
-            for k in moved.keys():
-                custom_json.pop(k, None)
-
-        bundle = {"graph": graph_data, "ui": ui_data}
-        path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
-        logging.info("UI state saved at %s", path)
-
-
-    def _load_ui(self):
-        path = pathlib.Path("/home/rapha/file_bundle.json")
-        logging.info("Loading UI state + NodeGraph session from: %s", path)
-        data = json.loads(path.read_text(encoding="utf-8"))
-
-        # 1) Load graph
-        self.node_graph.clear_session()
-        self.node_graph.deserialize_session(data["graph"])
-
-        # Take the Add props out of the json to avoid deserialize problems
-        for node_dict in data["graph"]["nodes"].values():
-            node_name = node_dict.get("name")
-            add_customs = node_dict.get("add_custom", {})
-
-            if not add_customs:
-                continue
-
-            node = self.node_graph.get_node_by_name(node_name)
-            if not node:
-                logging.warning("Node '%s' not found while loading add_custom", node_name)
-                continue
-
-            for key_custom, value_custom in add_customs.items():
-
-                inverse_map = {v[0]: k for k, v in node.PREDEFINED_PROPS.items()}
-                lbl = inverse_map.get(key_custom, key_custom)
-
-                try:
-                    node.add_text_input(name=key_custom, label=lbl, text=value_custom)
-                    node.hide_widget(key_custom)
-                    logging.info("Restored custom property '%s' for node '%s'", key_custom, node_name)
-                except Exception:
-                    logging.exception("Failed to restore property '%s' on node '%s'", key_custom, node_name)
-
-        # 2) Load UI
-        self.ui_state.restore(self, data["ui"])
-        
-        # 3) Show full screen
-        self.showNormal()
-        self.setWindowState(self.windowState() | QtCore.Qt.WindowMaximized)
-        self.raise_()
-        self.activateWindow()
-        
-        logging.info("UI state loaded")
-
-
-    def _refresh_ui(self):
-        self._save_ui()
-        self._load_ui()

@@ -3,3 +3,4 @@ run_gromacs.py
 .vscode/settings.json
 styles.qss
 todo.md
+examples/

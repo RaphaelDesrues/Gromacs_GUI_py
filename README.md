@@ -13,7 +13,7 @@ Work still in progress...
 
 - Visual node graph for GROMACS workflows (`pdb2gmx`, `editconf`, `solvate`, `grompp`, `mdrun`, etc.)
 - Typed ports for automatic file propagation between connected nodes
-- Per-node preview properties with optional “extra” flags / parameters (`Add_Props`)
+- Per-node preview properties with optional “extra” flags / parameters (`Optional Props`)
 - Command preview for the selected node
 - Sequential execution with live console output
 - Save/Load sessions (graph and UI state)
